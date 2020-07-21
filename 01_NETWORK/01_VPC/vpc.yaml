@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "VPC: Common public and private subnets in two availability zones"
+
+Parameters:
+  EnvironmentName:
+    Description: Name of the environment this cloudformation stack belongs to
+    Type: String
+
+  EnvironmentType:
+    Description: Type of the environment for this stack
+    Type: String
+
+  SecondOctet:
+    Description: "Second Octet of VPC (10.XXX.0.0/16)"
+    Type: Number
+    ConstraintDescription: "Must be in the range [0-255]"
+    MinValue: 0
+    MaxValue: 255
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub "10.${SecondOctet}.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-vpc"
+        - Key: EnvironmentType
+          Value: !Ref EnvironmentType
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-igw"
+        - Key: EnvironmentType
+          Value: !Ref EnvironmentType
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ########################
+  # COMMON PUBLIC SUBNET #
+  ########################
+  CommonAZ1Public:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Sub "10.${SecondOctet}.0.0/24"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az1"
+
+  CommonAZ2Public:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Sub "10.${SecondOctet}.1.0/24"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az2"
+
+  RouteTableAZ1Public:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az1-rt"
+
+  RouteTableAZ2Public:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az2-rt"
+
+  RouteTableAssociationAZ1Public:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CommonAZ1Public
+      RouteTableId: !Ref RouteTableAZ1Public
+
+  RouteTableAssociationAZ2Public:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CommonAZ2Public
+      RouteTableId: !Ref RouteTableAZ2Public
+
+  RouteTablePublicAZ1InternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableAZ1Public
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  RouteTablePublicAZ2InternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableAZ2Public
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  #########################
+  # COMMON PRIVATE SUBNET #
+  #########################
+  CommonAZ1Private:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Sub "10.${SecondOctet}.3.0/24"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-private-az1"
+
+  CommonAZ2Private:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Sub "10.${SecondOctet}.4.0/24"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-private-az2"
+
+  RouteTableAZ1Private:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-private-az1-rt"
+
+  RouteTableAZ2Private:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-private-az2-rt"
+
+  RouteTableAssociationAZ1Private:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CommonAZ1Private
+      RouteTableId: !Ref RouteTableAZ1Private
+
+  RouteTableAssociationAZ2Private:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CommonAZ2Private
+      RouteTableId: !Ref RouteTableAZ2Private
+
+  ###############
+  # NAT GATEWAY #
+  ###############
+  EIPAZ1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  EIPAZ2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayAZ1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPAZ1.AllocationId
+      SubnetId: !Ref CommonAZ1Public
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az1-natgw"
+
+  NatGatewayAZ2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPAZ2.AllocationId
+      SubnetId: !Ref CommonAZ2Public
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-common-public-az2-natgw"
+
+Outputs:
+  StackName:
+    Description: "Stack name."
+    Value: !Sub ${AWS::StackName}
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "StackName"]]
+
+  VPC:
+    Description: The name of environment aware VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "VPC"]]
+
+  CommonAZ1Public:
+    Description: "CommonAZ1Public"
+    Value: !Ref CommonAZ1Public
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "SubnetAZ1Public"]]
+
+  CommonAZ2Public:
+    Description: "CommonAZ2Public"
+    Value: !Ref CommonAZ2Public
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "SubnetAZ2Public"]]
+
+  CommonAZ1Private:
+    Description: "CommonAZ1Private"
+    Value: !Ref CommonAZ1Private
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "SubnetAZ1Private"]]
+
+  CommonAZ2Private:
+    Description: "CommonAZ2Private"
+    Value: !Ref CommonAZ2Private
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "SubnetAZ2Private"]]
+
+  CidrBlock:
+    Description: "VPC network CIDR block"
+    Value: !GetAtt "VPC.CidrBlock"
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "CidrBlock"]]
+
+  SecondOctet:
+    Description: "Second Octet of VPC (10.XXX.0.0/16)"
+    Value: !Ref SecondOctet
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "SecondOctet"]]
+
+  NatGatewayAZ1:
+    Description: "NatGatewayAZ1"
+    Value: !Ref NatGatewayAZ1
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "NatGatewayAZ1"]]
+
+  NatGatewayAZ2:
+    Description: "NatGatewayAZ1"
+    Value: !Ref NatGatewayAZ2
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "NatGatewayAZ2"]]
