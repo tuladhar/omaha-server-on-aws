@@ -1,0 +1,107 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: High-availability Multi-AZ RDS for Omaha Server.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+  ###########################
+  # RDS-specific parameters #
+  ###########################
+  DBPort:
+    Type: Number
+    Default: "5432"
+  DBInstanceType:
+    Type: String
+  DBInstanceIdentifier:
+    Type: String
+  DBEngine:
+    Type: String
+    Default: postgres
+  DBEngineVersion:
+    Type: String
+    Description: Use 9.6.14 as default to be compatible with omaha postgres container instance.
+    Default: 9.6.14
+  MultiAZ:
+    Type: String
+  BackupRetentionPeriod:
+    Description: The number of days to keep snapshots of the database
+    Type: Number
+    Default: 1
+  DBUsername:
+    Type: String
+  DBPassword:
+    Type: String
+
+Resources:
+  DBInstance:
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllowMajorVersionUpgrade: "false"
+      AutoMinorVersionUpgrade: "true"
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      CopyTagsToSnapshot: "true"
+      StorageType: gp2
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBInstanceClass: !Ref DBInstanceType
+      Engine: !Ref DBEngine
+      EngineVersion: !Ref DBEngineVersion
+      AllocatedStorage: "20"
+      MultiAZ: !Ref MultiAZ
+      VPCSecurityGroups:
+        - Ref: DBSecurityGroup
+      DBSubnetGroupName:
+        Ref: DBSubnetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}"
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}-sg"
+      VpcId:
+        Fn::ImportValue: !Join [":", [!Ref EnvironmentName, "VPC"]]
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: !Ref DBPort
+          ToPort: !Ref DBPort
+          CidrIp:
+            Fn::ImportValue: !Join [":", [!Ref EnvironmentName, "CidrBlock"]]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}-sg"
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}-db-subnet-group"
+      SubnetIds:
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ1Private"]]
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ2Private"]]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}-db-subnet-group"
+
+Outputs:
+  DBEndpoint:
+    Description: "The connection endpoint for the database."
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, !Ref DBEngine, "Endpoint"]]
+
+  DBSecurityGroup:
+    Value: !GetAtt DBSecurityGroup.GroupId
+    Export:
+      Name:
+        !Join [":", [!Ref EnvironmentName, !Ref DBEngine, "SecurityGroupId"]]
