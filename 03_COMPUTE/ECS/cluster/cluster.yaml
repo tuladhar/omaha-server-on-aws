@@ -1,0 +1,338 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: High-availability private ECS cluster powered by EC2 for Omaha Server
+
+Parameters:
+  #####################
+  # COMMON PARAMETERS #
+  #####################
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+  #############################
+  # STACK SPECIFIC PARAMETERS #
+  #############################
+  ALBType:
+    Type: String
+    Default: public-alb
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of EC2 instances to launch in ECS cluster
+  MinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of EC2 instances that can be launched in your ECS cluster.
+  MaxSize:
+    Type: Number
+    Default: 4
+    Description: Maximum number of EC2 instances that can be launched in your ECS cluster.
+  ImageId:
+    Description: AMI ID
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t3.small
+  CPUUtilizationThreshold:
+    Type: String
+    Default: 80
+    Description: If average CPU utlization for auto-scaling group instance is greater than 80% then trigger instance scaling.
+
+Resources:
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${EnvironmentName}-${EnvironmentType}-ecs-cluster"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-ecs-cluster"
+
+  EcsHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the ECS hosts that run containers
+      VpcId:
+        Fn::ImportValue: !Join [":", [!Ref EnvironmentName, "VPC"]]
+      SecurityGroupIngress:
+        - Description: Ingress from the public ALB
+          IpProtocol: "-1"
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${EnvironmentName}:${ALBType}:LoadBalancerSecurityGroup"
+        - Description: Ingress from resources within VPC
+          IpProtocol: "-1"
+          CidrIp:
+            Fn::ImportValue: !Sub "${EnvironmentName}:CidrBlock"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-ecs-cluster-host-sg"
+
+  EcsSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: "Allow ingress traffic from self"
+      GroupId: !Ref "EcsHostSecurityGroup"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref "EcsHostSecurityGroup"
+
+  ########################
+  # Launch Configuration #
+  ########################
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref ImageId
+      SecurityGroups:
+        - !Ref EcsHostSecurityGroup
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref IamInstanceProfile
+      # NOTE: Keyname is not required, as we'll use AWS Instance Connect
+      # KeyName: !Ref AWS::NoValue
+      EbsOptimized: true
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash -xe
+              echo ECS_CLUSTER=${EcsCluster} >> /etc/ecs/ecs.config
+              yum install -y aws-cfn-bootstrap ec2-instance-connect awscli
+              amazon-linux-extras install epel
+              yum install -y s3fs-fuse
+              mkdir -p /srv/omaha_s3
+              s3fs ${OmahaS3BucketName} /srv/omaha_s3 -o iam_role=auto
+              /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EcsAutoScalingGroup --region ${AWS::Region}
+            - OmahaS3BucketName:
+                Fn::ImportValue: !Sub "${EnvironmentName}:BucketName"
+
+  ######################
+  # AUTO-SCALING GROUP #
+  ######################
+  EcsAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ1Private"]]
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ2Private"]]
+      Cooldown: 300
+      DesiredCapacity: !Ref DesiredCapacity
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MaxSize: !Ref MaxSize
+      MinSize: !Ref MinSize
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-ecs-asg"
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: "1"
+        MaxBatchSize: "1"
+        PauseTime: "PT15M"
+        # During stack update, the following Auto Scaling processes will be suspended to allow rolling update
+        # to function properly, do not suspend other processes such as Launch, Terminate and other than what's listed below.
+        SuspendProcesses:
+          - HealthCheck
+          - ReplaceUnhealthy
+          - AZRebalance
+          - AlarmNotification
+          - ScheduledActions
+        WaitOnResourceSignals: true
+
+  ##################################
+  # TARGET-TRACKING SCALING POLICY #
+  ##################################
+  CPUUtilizationScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref EcsAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref CPUUtilizationThreshold
+
+  AutoscalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [application-autoscaling.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: service-autoscaling
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "application-autoscaling:*"
+                  - "cloudwatch:DescribeAlarms"
+                  - "cloudwatch:PutMetricAlarm"
+                  - "ecs:DescribeServices"
+                  - "ecs:UpdateService"
+                Resource: "*"
+
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref Ec2Role
+
+  # Role for the ECS tasks
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ssm
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameters"
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - "*"
+
+  # Role for the EC2 hosts. This allows the ECS agent on the EC2 hosts
+  # to communciate with the ECS control plane, as well as download the docker
+  # images from ECR to run on your host.
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ecs:CreateCluster"
+                  - "ecs:DeregisterContainerInstance"
+                  - "ecs:DiscoverPollEndpoint"
+                  - "ecs:Poll"
+                  - "ecs:RegisterContainerInstance"
+                  - "ecs:StartTelemetrySession"
+                  - "ecs:Submit*"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchGetImage"
+                  - "ecr:GetDownloadUrlForLayer"
+                Resource: "*"
+        - PolicyName: ssm
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameters"
+                  - "secretsmanager:GetSecretValue"
+                  - "kms:Decrypt"
+                Resource:
+                  - "*"
+        - PolicyName: s3-fuse
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                Resource:
+                  Fn::Sub:
+                    - "arn:aws:s3:::${OmahaS3BucketName}"
+                    - OmahaS3BucketName:
+                        Fn::ImportValue: !Sub "${EnvironmentName}:BucketName"
+              - Effect: Allow
+                Action:
+                  - "s3:*Object"
+                Resource:
+                  Fn::Sub:
+                    - "arn:aws:s3:::${OmahaS3BucketName}/*"
+                    - OmahaS3BucketName:
+                        Fn::ImportValue: !Sub "${EnvironmentName}:BucketName"
+
+  # This is an IAM role which authorizes AWS ECS to manage resources.
+  # e.g: Updating load balancer with details of where your containers are.
+  EcsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  # Rules which allow ECS to attach network interfaces to instances
+                  # for awsvpc networking mode to work right
+                  - "ec2:AttachNetworkInterface"
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:CreateNetworkInterfacePermission"
+                  - "ec2:DeleteNetworkInterface"
+                  - "ec2:DeleteNetworkInterfacePermission"
+                  - "ec2:Describe*"
+                  - "ec2:DetachNetworkInterface"
+                  # Rules which allow ECS to update load balancers to send traffic to your containers
+                  - "elasticloadbalancing:DeregisterInstancesFromLoadBalancer"
+                  - "elasticloadbalancing:DeregisterTargets"
+                  - "elasticloadbalancing:Describe*"
+                  - "elasticloadbalancing:RegisterInstancesWithLoadBalancer"
+                  - "elasticloadbalancing:RegisterTargets"
+                Resource: "*"
+
+Outputs:
+  ClusterName:
+    Description: The name of the ECS cluster
+    Value: !Ref EcsCluster
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "ClusterName"]]
+  EcsRole:
+    Description: The ARN of the ECS role
+    Value: !GetAtt "EcsRole.Arn"
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "EcsRole"]]
+  EcsTaskExecutionRole:
+    Description: The ARN of the ECS task execution role
+    Value: !GetAtt "EcsTaskExecutionRole.Arn"
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "EcsTaskExecutionRole"]]
+  AutoscalingRole:
+    Description: The ARN of the Autoscaling role
+    Value: !GetAtt "AutoscalingRole.Arn"
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "AutoscalingRole"]]
+  EcsHostSecurityGroup:
+    Description: A security group used to allow containers to receive traffic
+    Value: !Ref "EcsHostSecurityGroup"
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, "EcsHostSecurityGroup"]]
