@@ -34,8 +34,10 @@ Parameters:
     Default: 1
   DBUsername:
     Type: String
+    NoEcho: true
   DBPassword:
     Type: String
+    NoEcho: true
 
 Resources:
   DBInstance:
