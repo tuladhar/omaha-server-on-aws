@@ -162,6 +162,20 @@ Resources:
       SubnetId: !Ref CommonAZ2Private
       RouteTableId: !Ref RouteTableAZ2Private
 
+  RouteTablePrivateAZ1InternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableAZ1Private
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayAZ1
+
+  RouteTablePrivateAZ2InternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTableAZ2Private
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGatewayAZ2
+
   ###############
   # NAT GATEWAY #
   ###############
