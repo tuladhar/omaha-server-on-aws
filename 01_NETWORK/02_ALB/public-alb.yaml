@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "ALB: Public ALB in public and private subnets in two availability zones"
+Description: "ALB: Public ALB in public subnets in two availability zones"
 
 Parameters:
   EnvironmentName:
