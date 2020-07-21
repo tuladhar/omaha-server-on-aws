@@ -1,0 +1,94 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ALB: Public ALB in public and private subnets in two availability zones"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+  ALBType:
+    Type: String
+    Default: public-alb
+
+Resources:
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${EnvironmentName}-${EnvironmentType}-publib-alb-sg"
+      GroupDescription: Access to the public facing load-balancer from the Internet
+      VpcId:
+        Fn::ImportValue: !Sub "${EnvironmentName}:VPC"
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-public-alb-sg"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - Fn::ImportValue: !Sub "${EnvironmentName}:SubnetAZ1Public"
+        - Fn::ImportValue: !Sub "${EnvironmentName}:SubnetAZ2Public"
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-public-alb"
+
+  DefaultTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId:
+        Fn::ImportValue: !Sub "${EnvironmentName}:VPC"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-public-alb-default-tg"
+
+  LoadBalancerListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref DefaultTargetGroup
+          Type: "forward"
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  LoadBalancerSecurityGroup:
+    Description: The load balancer security group
+    Value: !Ref LoadBalancerSecurityGroup
+    Export:
+      Name: !Sub "${EnvironmentName}:${ALBType}:LoadBalancerSecurityGroup"
+
+  PublicUrl:
+    Description: The publicly reachable URL of the ALB
+    Value: !Join ["", ["http://", !GetAtt "LoadBalancer.DNSName"]]
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, !Ref ALBType, "Url"]]
+
+  LoadBalancerArn:
+    Description: The ARN of the load balancer
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub "${EnvironmentName}:${ALBType}:LoadBalancer"
+
+  HTTPListener:
+    Description: The ARN of the load balancer's HTTP Listener
+    Value: !Ref LoadBalancerListenerHTTP
+    Export:
+      Name: !Sub "${EnvironmentName}:${ALBType}:ListenerHTTP"
