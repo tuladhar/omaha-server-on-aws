@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Omaha Server ECS Service
+Parameters:
+  #####################
+  # COMMON PARAMETERS #
+  #####################
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+  #############################
+  # STACK SPECIFIC PARAMETERS #
+  #############################
+  DBUsername:
+    Type: String
+    NoEcho: true
+  DBPassword:
+    Type: String
+    NoEcho: true
+  SecretKey:
+    Type: String
+    NoEcho: true
+  ALBType:
+    Type: String
+    Default: public-alb
+  ServiceName:
+    Type: String
+    Default: omaha-web-app
+  ImageName:
+    Type: String
+    Default: crystalnix/omaha-server
+  ImageVersion:
+    Type: String
+    Default: dev
+  ContainerPort:
+    Type: Number
+    Default: 8000
+  ContainerCpu:
+    Type: Number
+    Default: 2048
+    Description: How much CPU to give the container. 1024 is 1 CPU
+  ContainerMemory:
+    Type: Number
+    Default: 1955
+    Description: How much memory in megabytes to give the container
+  Path:
+    Type: String
+    Default: "*"
+  Priority:
+    Type: Number
+    Default: 1
+
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub ${EnvironmentName}-${EnvironmentType}-service-${ServiceName}
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref "ServiceName"
+      Cpu: !Ref "ContainerCpu"
+      Memory: !Ref "ContainerMemory"
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub "${EnvironmentName}:EcsTaskExecutionRole"
+      Volumes:
+        - Name: "omaha_s3fs"
+          Host:
+            SourcePath: "/srv/omaha_s3"
+          DockerVolumeConfiguration: !Ref "AWS::NoValue"
+      ContainerDefinitions:
+        - Name: !Ref "ServiceName"
+          Hostname:
+            Fn::ImportValue: !Sub "${EnvironmentName}:${ALBType}:Hostname"
+          Cpu: !Ref ContainerCpu
+          Memory: !Ref "ContainerMemory"
+          Image: !Sub "${ImageName}:${ImageVersion}"
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          LogConfiguration:
+            LogDriver: "awslogs"
+            Options:
+              awslogs-group: !Sub "${EnvironmentName}-${EnvironmentType}-service-${ServiceName}"
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: !Ref "ServiceName"
+          MountPoints:
+            - ReadOnly: false
+              ContainerPath: "/srv/omaha_s3"
+              SourceVolume: "omaha_s3fs"
+          Environment:
+            - Name: "APP_VERSION"
+              Value: "PROD"
+            - Name: "AWS_ROLE"
+              Value: "auto"
+            - Name: "AWS_STORAGE_BUCKET_NAME"
+              Value:
+                Fn::ImportValue: !Sub "${EnvironmentName}:BucketName"
+            - Name: "CUP_REQUEST_VALIDATION"
+              Value: "True"
+            - Name: "DB_HOST"
+              Value:
+                Fn::ImportValue: !Sub "${EnvironmentName}:postgres:Endpoint"
+            - Name: "DB_PORT"
+              Value: "5432"
+            - Name: DB_USER
+              Value: !Sub ${DBUsername}
+            - Name: DB_NAME
+              Value: postgres
+            - Name: DB_PASSWORD
+              Value: !Sub ${DBPassword}
+            - Name: "DB_PUBLIC_PASSWORD"
+              Value: "omaha_public_password"
+            - Name: "DB_PUBLIC_USER"
+              Value: "auto"
+            - Name: "DJANGO_SETTINGS_MODULE"
+              Value: "omaha_server.settings_prod"
+            - Name: "HOST_NAME"
+              Value:
+                Fn::ImportValue: !Sub "${EnvironmentName}:${ALBType}:Hostname"
+            - Name: "OMAHA_SERVER_PRIVATE"
+              Value: True
+            - Name: "OMAHA_URL_PREFIX"
+              Value:
+                Fn::Sub:
+                  - "https://${OmahaHostname}"
+                  - OmahaHostname:
+                      Fn::ImportValue: !Sub "${EnvironmentName}:${ALBType}:Hostname"
+            - Name: "REDIS_HOST"
+              Value:
+                Fn::ImportValue: !Sub "${EnvironmentName}:redis:Endpoint"
+            - Name: "REDIS_PORT"
+              Value:
+                Fn::ImportValue: !Sub "${EnvironmentName}:redis:Port"
+            - Name: "UWSGI_PROCESSES"
+              Value: "2"
+            - Name: "UWSGI_THREADS"
+              Value: "2"
+            - Name: SECRET_KEY
+              Value: !Sub ${SecretKey}
+            - Name: AWS_ACCESS_KEY_ID
+              Value: AKIAUTQBUFQWPFTWAVUX
+            - Name: AWS_SECRET_ACCESS_KEY
+              Value: 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
+
+  # Service to run single copy (i.e, DAEMON mode) of task
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancerRule
+    Properties:
+      ServiceName: !Ref "ServiceName"
+      Cluster:
+        Fn::ImportValue: !Sub ${EnvironmentName}:ClusterName
+      TaskDefinition: !Ref "TaskDefinition"
+      LoadBalancers:
+        - ContainerName: !Ref "ServiceName"
+          ContainerPort: !Ref "ContainerPort"
+          TargetGroupArn: !Ref "TargetGroup"
+      # NOTE: For daemon mode, 'DeploymentConfiguration' is not application
+      SchedulingStrategy: "DAEMON"
+      Role:
+        Fn::ImportValue: !Sub "${EnvironmentName}:EcsRole"
+
+  # A target group to automatically distribute traffic across all the targets.
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 60
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 30
+      HealthyThresholdCount: 2
+      Name: !Ref ServiceName
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 10
+      Matcher:
+        HttpCode: "200,404"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "60"
+      VpcId:
+        Fn::ImportValue: !Sub ${EnvironmentName}:VPC
+
+  # Create a rule on the load balancer for routing traffic to the target group
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref "TargetGroup"
+          Type: "forward"
+      Conditions:
+        - Field: path-pattern
+          Values: [!Ref "Path"]
+      ListenerArn:
+        Fn::ImportValue: !Sub ${EnvironmentName}:${ALBType}:ListenerHTTP
+      Priority: !Ref "Priority"
