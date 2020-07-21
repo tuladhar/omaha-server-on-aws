@@ -1,0 +1,125 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: High-availability Multi-AZ ElasticCache (redis) for Omaha Server Dashboard
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+  CostCenter:
+    Type: String
+    Default: engineering
+
+  ###################################
+  # ElastiCache-specific parameters #
+  ###################################
+  CacheEngine:
+    Type: String
+    Default: redis
+
+  CacheEngineVersion:
+    Type: String
+    Default: 4.0.10
+
+  CacheNodeType:
+    Description: The instance type the nodes will launch under.
+    Type: String
+    Default: cache.t2.micro
+
+  MultiAZSupport:
+    Description: >-
+      Indicates whether Multi-AZ is enabled. When Multi-AZ is enabled, a
+      read-only replica is automatically promoted to a read-write primary
+      cluster if the existing primary cluster fails. If you specify true, you must specify a value greater than 1 for the NumCacheClusters property.
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+
+  NumCacheClusters:
+    Description: >-
+      The number of cache clusters for this replication group. If MultiAZ
+      support is enabled, you must specify a value greater than 1.
+    Default: 2
+    Type: Number
+
+  CachePort:
+    Type: Number
+    Default: 6379
+
+  SnapshotRetentionLimit:
+    Description: >-
+      The number of days that ElastiCache retains automatic snapshots before
+      deleting them.
+    Type: Number
+    Default: 1
+
+Resources:
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-sg"
+      VpcId:
+        Fn::ImportValue: !Join [":", [!Ref EnvironmentName, "VPC"]]
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: !Ref CachePort
+          ToPort: !Ref CachePort
+          CidrIp:
+            Fn::ImportValue: !Join [":", [!Ref EnvironmentName, "CidrBlock"]]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-sg"
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-cache-subnet-group"
+      Description: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-cache-subnet-group"
+      SubnetIds:
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ1Private"]]
+        - Fn::ImportValue:
+            !Join [":", [!Ref EnvironmentName, "SubnetAZ2Private"]]
+
+  ReplicationGroup:
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-replicationgroup"
+      AtRestEncryptionEnabled: true
+      AutomaticFailoverEnabled: !Ref MultiAZSupport
+      CacheNodeType: !Ref CacheNodeType
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      Engine: !Ref CacheEngine
+      EngineVersion: !Ref CacheEngineVersion
+      NumCacheClusters: !Ref NumCacheClusters
+      Port: !Ref CachePort
+      SecurityGroupIds:
+        - !GetAtt CacheSecurityGroup.GroupId
+      SnapshotRetentionLimit: !Ref SnapshotRetentionLimit
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${CacheEngine}-replicationgroup"
+
+Outputs:
+  CacheEndpoint:
+    Value: !GetAtt ReplicationGroup.PrimaryEndPoint.Address
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, !Ref CacheEngine, "Endpoint"]]
+
+  CacheSecurityGroup:
+    Value: !GetAtt CacheSecurityGroup.GroupId
+    Export:
+      Name:
+        !Join [":", [!Ref EnvironmentName, !Ref CacheEngine, "SecurityGroupId"]]
+
+  CachePort:
+    Value: !Ref CachePort
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, !Ref CacheEngine, "Port"]]
