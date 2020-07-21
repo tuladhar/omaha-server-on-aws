@@ -75,6 +75,11 @@ Outputs:
     Export:
       Name: !Sub "${EnvironmentName}:${ALBType}:LoadBalancerSecurityGroup"
 
+  Hostname:
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Join [":", [!Ref EnvironmentName, !Ref ALBType, "Hostname"]]
+
   PublicUrl:
     Description: The publicly reachable URL of the ALB
     Value: !Join ["", ["http://", !GetAtt "LoadBalancer.DNSName"]]
