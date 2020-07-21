@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: S3 bucket name for Omaha Server
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+  EnvironmentType:
+    Type: String
+
+Resources:
+  EncryptedS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-${EnvironmentType}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+    DeletionPolicy: Delete
+
+Outputs:
+  EncryptedS3Bucket:
+    Value: !Ref EncryptedS3Bucket
+    Export:
+      Name: !Sub "${EnvironmentName}:BucketName"
