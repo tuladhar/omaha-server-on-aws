@@ -226,6 +226,8 @@ Resources:
               Service: [ec2.amazonaws.com]
             Action: ["sts:AssumeRole"]
       Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
         - PolicyName: ecs-service
           PolicyDocument:
