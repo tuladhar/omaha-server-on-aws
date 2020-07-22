@@ -1,4 +1,4 @@
-## Deploy production-grade Omaha server (as known as Google Update) on AWS Cloud.
+## Deploy Scalable and Highly Available Web App (Omaha Server) on AWS Cloud
 #### Powered by ECS and fully managed by CloudFormation.
 
 ### Read the blog post
