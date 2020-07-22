@@ -9,10 +9,6 @@ Parameters:
   EnvironmentType:
     Type: String
 
-  CostCenter:
-    Type: String
-    Default: engineering
-
   ###################################
   # ElastiCache-specific parameters #
   ###################################
