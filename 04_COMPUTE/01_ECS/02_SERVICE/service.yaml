@@ -36,7 +36,7 @@ Parameters:
     Default: dev
   ContainerPort:
     Type: Number
-    Default: 8000
+    Default: 8080
   ContainerCpu:
     Type: Number
     Default: 2048
@@ -140,10 +140,6 @@ Resources:
               Value: "2"
             - Name: SECRET_KEY
               Value: !Sub ${SecretKey}
-            - Name: AWS_ACCESS_KEY_ID
-              Value: AKIAUTQBUFQWPFTWAVUX
-            - Name: AWS_SECRET_ACCESS_KEY
-              Value: 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
 
   # Service to run single copy (i.e, DAEMON mode) of task
   Service:

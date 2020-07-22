@@ -13,6 +13,8 @@ SECRET_KEY=dGVzdAoAEWxd
 
 STACK_PARAMS:=ParameterKey=EnvironmentName,ParameterValue=$(ENV_LABEL) ParameterKey=EnvironmentType,ParameterValue=$(ENV_TYPE) ParameterKey=DBUsername,ParameterValue=$(DB_USERNAME) ParameterKey=DBPassword,ParameterValue=$(DB_PASSWORD) ParameterKey=SecretKey,ParameterValue=$(SECRET_KEY)
 
+USE_PREV_STACK_PARAMS:=ParameterKey=EnvironmentName,UsePreviousValue=True ParameterKey=EnvironmentType,UsePreviousValue=True ParameterKey=DBUsername,UsePreviousValue=True ParameterKey=DBPassword,UsePreviousValue=True ParameterKey=SecretKey,UsePreviousValue=True
+
 create-stack:
 	aws cloudformation create-stack --stack-name $(STACK_NAME) --template-body file://`pwd`/$(TEMPLATE) $(AWS_ARGS) --parameters $(STACK_PARAMS)
 
