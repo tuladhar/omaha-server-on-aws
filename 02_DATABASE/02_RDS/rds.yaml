@@ -66,6 +66,15 @@ Resources:
         - Key: Name
           Value: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}"
 
+  ReplicaDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      SourceDBInstanceIdentifier: !Ref DBInstance
+      DBInstanceClass: !Ref DBInstanceType
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-${EnvironmentType}-${DBEngine}-replica"
+
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -97,10 +106,17 @@ Resources:
 
 Outputs:
   DBEndpoint:
-    Description: "The connection endpoint for the database."
+    Description: "The connection endpoint for the master database."
     Value: !GetAtt DBInstance.Endpoint.Address
     Export:
       Name: !Join [":", [!Ref EnvironmentName, !Ref DBEngine, "Endpoint"]]
+
+  ReplicaDBEndpoint:
+    Description: "The connection endpoint for the read-replica database."
+    Value: !GetAtt ReplicaDBInstance.Endpoint.Address
+    Export:
+      Name:
+        !Join [":", [!Ref EnvironmentName, !Ref DBEngine, "ReplicaEndpoint"]]
 
   DBSecurityGroup:
     Value: !GetAtt DBSecurityGroup.GroupId
