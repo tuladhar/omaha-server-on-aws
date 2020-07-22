@@ -23,7 +23,7 @@ Parameters:
     Description: Desired number of EC2 instances to launch in ECS cluster
   MinSize:
     Type: Number
-    Default: 1
+    Default: 2
     Description: Minimum number of EC2 instances that can be launched in your ECS cluster.
   MaxSize:
     Type: Number
