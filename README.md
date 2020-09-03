@@ -1,5 +1,5 @@
 
-## Deploy a scalable, highly available and infra-as-code managed web application (Omaha server) on AWS Cloud
+## Deploy a scalable, highly available and infra-as-code managed web application (Omaha server) on AWS
 
 ### Read the blog post
 - [Dev.to](https://dev.to/ptuladhar3/deploy-scalable-highly-available-and-infra-as-code-managed-web-app-on-aws-4klc)
